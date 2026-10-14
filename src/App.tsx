@@ -27,6 +27,9 @@ type ScoreDetails = {
   missing_keywords: string[];
   matched_count: number;
   requirement_count: number;
+  exact_matched_count: number;
+  semantic_matched_count: number;
+  semantic_matches: Record<string, string[]>;
   method: string;
 };
 
@@ -106,6 +109,44 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   } catch (reason) {
     if (controller.signal.aborted) {
       throw new Error("The request timed out. Check that the API server is responsive and try again.");
+    }
+    throw reason;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function downloadApiFile(path: string, body: unknown): Promise<{ blob: Blob; filename: string }> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(`/api${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let message = `Download failed (${response.status}).`;
+      try {
+        const result = (await response.json()) as { detail?: string };
+        if (result.detail) message = result.detail;
+      } catch {
+        message = `Download failed (${response.status}). Check that the API server is running.`;
+      }
+      throw new Error(message);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const encodedFilename = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const plainFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+    const filename = encodedFilename
+      ? decodeURIComponent(encodedFilename)
+      : plainFilename ?? "tailored-resume";
+    return { blob: await response.blob(), filename };
+  } catch (reason) {
+    if (controller.signal.aborted) {
+      throw new Error("The download timed out. Check that the API server is responsive and try again.");
     }
     throw reason;
   } finally {
@@ -256,14 +297,16 @@ function App() {
 
   async function applyInstructions(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!workflow || !instructions.trim()) return;
+    const instruction = instructions.trim();
+    if (!workflow || busyAction !== "" || !instruction) return;
     setError("");
+    setNotice("");
     setBusyAction("instructions");
     try {
       const result = await api<Workflow>(`/workflows/${workflow.id}/instructions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction: instructions }),
+        body: JSON.stringify({ instruction }),
       });
       setWorkflow(result);
       setNotice(result.demo_mode
@@ -276,9 +319,42 @@ function App() {
     }
   }
 
-  async function generateFinalResume() {
-    if (!workflow) return;
+  async function downloadFinalResume(format: "docx" | "pdf") {
+    if (!workflow || busyAction !== "") return;
     setError("");
+    setNotice("");
+    setBusyAction(`download-${format}`);
+    try {
+      const { blob, filename } = await downloadApiFile(
+        `/download/${format}`,
+        {
+          workflow_id: workflow.id,
+          text: tailoredDisplay,
+        },
+      );
+      if (blob.size === 0) throw new Error("The API returned an empty resume file. Please try again.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+      setPreview("comparison");
+      setNotice(`Your tailored ${format.toUpperCase()} download is ready.`);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function generateFinalResume() {
+    if (!workflow || busyAction !== "" || pendingCount > 0) return;
+    setError("");
+    setNotice("");
     setBusyAction("finalize");
     try {
       const result = await api<Workflow>(`/workflows/${workflow.id}/finalize`, { method: "POST" });
@@ -463,7 +539,7 @@ function App() {
 
                   <section className="card instructions-card">
                     <div className="instructions-icon"><MessageSquareText size={17} /></div><div className="instructions-body"><div><span className="section-kicker">MAKE IT YOURS</span><h3>Have something specific in mind?</h3><p>Tell us what to focus on. Applying instructions refreshes the suggestion queue and clears previous decisions; nothing changes in your resume automatically.</p></div>
-                      <form onSubmit={applyInstructions}><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="e.g. Shorten my professional summary and highlight my verified SQL experience. Keep all facts unchanged." maxLength={2000} aria-label="Additional tailoring instructions" /><div className="instructions-footer"><span>{instructions.length} / 2,000</span><button type="submit" className="button button-primary button-small" disabled={busyAction === "instructions" || !instructions.trim()}>{busyAction === "instructions" ? <LoaderCircle className="spin" size={15} /> : <Send size={14} />}Apply my instructions</button></div></form>
+                      <form onSubmit={applyInstructions}><textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="e.g. Shorten my professional summary and highlight my verified SQL experience. Keep all facts unchanged." maxLength={2000} aria-label="Additional tailoring instructions" /><div className="instructions-footer"><span>{instructions.length} / 2,000</span><button type="submit" className="button button-primary button-small" disabled={busyAction !== "" || !instructions.trim()}>{busyAction === "instructions" ? <LoaderCircle className="spin" size={15} /> : <Send size={14} />}Apply my instructions</button></div></form>
                     </div>
                   </section>
 
@@ -488,11 +564,16 @@ function App() {
                       <div className="remaining-gaps"><span className="remaining-icon"><Lightbulb size={15} /></span><div><strong>Still not explicit in the tailored text</strong><div className="keyword-list">{(showAllMissingKeywords ? liveScoreDetails?.missing_keywords ?? [] : (liveScoreDetails?.missing_keywords ?? []).slice(0, 14)).map((word) => <span className="keyword keyword-missing" key={word}>{word}</span>)}{(liveScoreDetails?.missing_keywords.length ?? 0) > 14 && <button className="text-action" onClick={() => setShowAllMissingKeywords(!showAllMissingKeywords)}>{showAllMissingKeywords ? "Show fewer terms" : `Show all ${liveScoreDetails?.missing_keywords.length} terms`}</button>}{!liveScoreDetails?.missing_keywords.length && <span className="empty-copy">All analyzed JD terms are present. This still is not an ATS guarantee.</span>}</div></div></div>
                       {workflow.layout_review.map((check) => <div className="limitation-note" key={check}><TriangleAlert size={14} />{check}</div>)}
                       {workflow.limitations.map((limitation) => <div className="limitation-note" key={limitation}><CircleHelp size={14} />{limitation}</div>)}
-                      <div className="download-row"><a className="button button-download" href={`/api/workflows/${workflow.id}/download/docx`} download><FileDown size={16} />Download DOCX</a><a className="button button-download-secondary" href={`/api/workflows/${workflow.id}/download/pdf`} download><Download size={16} />Download PDF</a><a className="original-link" href={`/api/workflows/${workflow.id}/original`} download><FileText size={15} />Download unchanged original</a><button className="return-edit" onClick={() => { setWorkflow({ ...workflow, finalized: false }); setNotice("Return to your suggestions and make another round of edits."); }}><Pencil size={14} />Return to editing</button></div>
                     </section>
                   ) : (
                     <div className="generate-bar"><div><div className="generate-icon"><FileCheck2 size={17} /></div><div><strong>Ready to build your tailored resume?</strong><span>{pendingCount > 0 ? `Resolve all ${pendingCount} pending suggestion${pendingCount === 1 ? "" : "s"} first.` : `${approvedCount} approved · ${rejectedCount} rejected · your original will remain unchanged.`}</span></div></div><button className="button button-primary" disabled={pendingCount > 0 || busyAction !== ""} onClick={() => void generateFinalResume()}>{busyAction === "finalize" ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{busyAction === "finalize" ? "Building…" : "Generate tailored resume"}<ArrowRight size={15} /></button></div>
                   )}
+                  <div className="download-row" aria-label="Resume downloads">
+                    <button className="button button-download" disabled={busyAction !== ""} onClick={() => void downloadFinalResume("docx")}>{busyAction === "download-docx" ? <LoaderCircle className="spin" size={16} /> : <FileDown size={16} />}Download DOCX</button>
+                    <button className="button button-download-secondary" disabled={busyAction !== ""} onClick={() => void downloadFinalResume("pdf")}>{busyAction === "download-pdf" ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}Download PDF</button>
+                    {workflow.download_urls && <a className="original-link" href={workflow.download_urls.original} download><FileText size={15} />Download unchanged original</a>}
+                    {workflow.finalized && <button className="return-edit" onClick={() => { setWorkflow({ ...workflow, finalized: false }); setNotice("Return to your suggestions and make another round of edits."); }}><Pencil size={14} />Return to editing</button>}
+                  </div>
                 </>
               )}
               {!workflow && history.length > 0 && <RecentActivity history={history.slice(0, 3)} onSelect={(id) => void loadWorkflow(id)} onHistory={() => choosePage("history")} />}

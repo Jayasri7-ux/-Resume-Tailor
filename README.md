@@ -32,7 +32,7 @@ The optional Google Docs helper in `gdocs_tailor.py` uses Google OAuth and Gemin
 
 ## Analysis and AI mode
 
-Without a configured provider, the app explicitly displays **Demo mode**. The match percentage is a transparent estimate of distinct, non-stopword terms shared with the job description, not an ATS score. Demo suggestions cite only source-resume text; no model-generated analysis is represented as AI. You can edit suggestions yourself and approve or reject each one.
+Without a configured provider, the app explicitly displays **Demo mode**. The match percentage is a transparent estimate of distinct job-description terms found in the resume, using exact terms and a small disclosed list of related-skill equivalents. It is not an ATS score; it does not guarantee a target score or hiring outcome. Keyword matching preserves short skills and compound technology terms such as `AI`, `C++`, `CI/CD`, and `.NET`. Demo suggestions cite only source-resume text; no model-generated analysis is represented as AI. You can edit suggestions yourself and approve or reject each one.
 
 For Gemini-generated suggestions, set `GEMINI_API_KEY` in the **backend process environment only**, then restart the API. Optionally set `GEMINI_MODEL`. The key is never sent to the browser or written to the workflow database. Provider errors are shown rather than silently substituting demo results. Independently check every AI proposal against your real experience before approving it.
 

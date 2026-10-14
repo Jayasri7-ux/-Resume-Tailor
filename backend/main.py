@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import html
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
+import unicodedata
 import uuid
 import zipfile
 from copy import deepcopy
@@ -29,7 +31,7 @@ from docx.text.paragraph import Paragraph
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
@@ -52,7 +54,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
 STOP_WORDS = set(
-    "about above across after again against all also an and any are as at be because been "
+    "a about above across after again against all also an and any are as at be because been "
     "before being below between both but by can could did do does doing down during each "
     "few for from further had has have having he her here hers herself him himself his how "
     "i if in into is it its itself just me more most my myself no nor not of off on once only "
@@ -81,6 +83,18 @@ SECTION_ALIASES = {
     "Education": ("education", "academic background"),
     "Certifications": ("certifications", "certificates", "licenses"),
     "Achievements": ("achievements", "awards", "honors", "accomplishments"),
+}
+KEYWORD_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:\.[A-Za-z0-9]+|[A-Za-z0-9]+(?:[./&-][A-Za-z0-9]+)*)(?:[+#]+)?(?![A-Za-z0-9])"
+)
+SINGLE_LETTER_KEYWORDS = {"c", "r"}
+RELATED_KEYWORD_ALIASES = {
+    "analytical": {"analysis", "analytics", "analyst"},
+    "capacity": {"ability", "capability", "capabilities"},
+    "critical": {"reasoning", "problem-solving"},
+    "thinking": {"reasoning", "problem-solving"},
+    "attention": {"accuracy", "attentive", "careful", "focus", "precision", "thoroughness"},
+    "detail": {"accuracy", "detail-oriented", "precision", "thoroughness"},
 }
 
 app = FastAPI(title="ResumeFit AI", version="1.0.0")
@@ -133,6 +147,21 @@ class BulkSuggestionAction(BaseModel):
 
 class InstructionRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
+
+
+class ExportSuggestionState(BaseModel):
+    id: str = Field(min_length=1, max_length=120)
+    status: Literal["approved", "rejected", "pending"]
+    proposed_text: str = Field(max_length=10000)
+
+
+class ResumeExportRequest(BaseModel):
+    suggestions: list[ExportSuggestionState] = Field(max_length=100)
+
+
+class DownloadRequest(BaseModel):
+    workflow_id: str = Field(min_length=32, max_length=32)
+    text: str = Field(min_length=1, max_length=40000)
 
 
 def get_workflow(workflow_id: str) -> tuple[WorkflowRecord, dict]:
@@ -302,27 +331,41 @@ def resume_sections(paragraphs: list[str]) -> dict[str, list[dict]]:
     return result
 
 
-def score_resume(resume_text: str, job_description: str) -> dict:
-    requirements = {
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", job_description)
-        if word.casefold() not in STOP_WORDS and len(word) > 2
+def extract_keywords(text: str) -> set[str]:
+    return {
+        match.group().casefold()
+        for match in KEYWORD_PATTERN.finditer(text)
+        if match.group().casefold() not in STOP_WORDS
+        and (
+            len(match.group()) > 1
+            or match.group().casefold() in SINGLE_LETTER_KEYWORDS
+        )
     }
+
+
+def score_resume(resume_text: str, job_description: str) -> dict:
+    requirements = extract_keywords(job_description)
     if not requirements:
         raise HTTPException(status_code=422, detail="The job description needs more detail to calculate a match.")
-    found = requirements.intersection(
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", resume_text)
-    )
-    matched = sorted(found)
-    missing = sorted(requirements - found)
+    resume_keywords = extract_keywords(resume_text)
+    exact_matches = requirements.intersection(resume_keywords)
+    semantic_matches = {
+        keyword: sorted(RELATED_KEYWORD_ALIASES[keyword].intersection(resume_keywords))
+        for keyword in requirements - exact_matches
+        if RELATED_KEYWORD_ALIASES.get(keyword, set()).intersection(resume_keywords)
+    }
+    matched = sorted(exact_matches | semantic_matches.keys())
+    missing = sorted(requirements - set(matched))
     return {
         "score": round(100 * len(matched) / len(requirements)),
         "matched_keywords": matched,
         "missing_keywords": missing,
         "matched_count": len(matched),
         "requirement_count": len(requirements),
-        "method": "Estimated vocabulary coverage: distinct, non-stopword JD terms found in resume text / distinct JD terms. This is not an ATS score or a prediction of interview outcomes.",
+        "exact_matched_count": len(exact_matches),
+        "semantic_matched_count": len(semantic_matches),
+        "semantic_matches": semantic_matches,
+        "method": "Estimated JD-term coverage: exact matches plus explicitly listed related-skill equivalents / distinct JD terms. Related matches are curated phrase-level proxies, not machine-understood meaning. This is not an ATS score or a prediction of interview outcomes.",
     }
 
 
@@ -373,15 +416,8 @@ def _demo_rewrite_section(section: str, text: str, missing_keywords: list[str]) 
 
 def make_demo_suggestions(paragraphs: list[str], job_description: str) -> list[dict]:
     sections = resume_sections(paragraphs)
-    jd_words = {
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", job_description)
-        if word.casefold() not in STOP_WORDS
-    }
-    all_resume_words = {
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", "\n".join(paragraphs))
-    }
+    jd_words = extract_keywords(job_description)
+    all_resume_words = extract_keywords("\n".join(paragraphs))
     missing_from_resume = sorted(jd_words - all_resume_words)
     suggestions = []
     for section in SECTIONS:
@@ -391,30 +427,18 @@ def make_demo_suggestions(paragraphs: list[str], job_description: str) -> list[d
         evidence = max(
             candidates,
             key=lambda item: len(
-                jd_words.intersection(
-                    word.casefold() for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", item["text"])
-                )
+                jd_words.intersection(extract_keywords(item["text"]))
             ),
         )
-        overlap = sorted(
-            jd_words.intersection(
-                word.casefold() for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", evidence["text"])
-            )
-        )
+        overlap = sorted(jd_words.intersection(extract_keywords(evidence["text"])))
         if not overlap:
             continue
         requirement = ", ".join(overlap[:4])
         proposed = _demo_rewrite_section(section, evidence["text"], missing_from_resume)
         has_rewrite = proposed != evidence["text"]
         if has_rewrite:
-            proposed_words = {
-                word.casefold()
-                for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", proposed)
-            }
-            original_words = {
-                word.casefold()
-                for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", evidence["text"])
-            }
+            proposed_words = extract_keywords(proposed)
+            original_words = extract_keywords(evidence["text"])
             newly_added = sorted(jd_words & proposed_words - original_words)
         else:
             newly_added = []
@@ -452,7 +476,7 @@ def make_demo_suggestions(paragraphs: list[str], job_description: str) -> list[d
             section, evidence = max(
                 candidates,
                 key=lambda candidate: len(
-                    re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", candidate[1]["text"])
+                    extract_keywords(candidate[1]["text"])
                 ),
             )
             suggestions.append({
@@ -511,33 +535,27 @@ def fallback_to_manual_suggestions(
 
 
 def call_gemini_suggestions(resume_text: str, job_description: str, instructions: str = "") -> tuple[list[dict], list[str]]:
-    requirements = {
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", job_description)
-        if word.casefold() not in STOP_WORDS and len(word) > 2
-    }
-    resume_words = {
-        word.casefold()
-        for word in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", resume_text)
-    }
+    requirements = extract_keywords(job_description)
+    resume_words = extract_keywords(resume_text)
     missing_keywords = sorted(requirements - resume_words)
-    missing_str = ", ".join(missing_keywords[:25]) if missing_keywords else "None"
+    missing_str = ", ".join(missing_keywords) if missing_keywords else "None"
 
     prompt = f"""You are an expert full-stack resume tailoring assistant and career editor.
-Your objective is to tailor the candidate's resume to match the target job description by actively rewriting key sections to naturally weave in missing core skills, competencies, and metrics from the job description.
+Your objective is to help the candidate present existing, supported experience clearly against the target job description.
 
 CRITICAL INSTRUCTIONS:
-1. TARGET SECTIONS: Rewrite relevant paragraphs/bullet points (especially in Professional Summary, Skills, and Experience). Propose no more than one change per section.
-2. WEAVE IN MISSING KEYWORDS: Even when initial keyword overlap or intersection is low or zero, actively rewrite the selected section to naturally incorporate the following missing core skills/keywords from the job description in context:
+1. TARGET SECTIONS: Review relevant existing paragraphs/bullets in Professional Summary, Skills, Experience, and Internships. Propose no more than one change per section, and do not create a section or bullet that is absent from the source resume.
+2. REVIEW ALL MISSING KEYWORDS: Use the full list below and the complete job-description context to identify relevant gaps and multi-word requirements. Inspect phrases such as analytical capacity, critical thinking, attention to detail, macros, and mathematics when they occur in the job description; do not treat their component words as a substitute for evidence. Naturally use a phrase only if the candidate's source text supports that experience; otherwise leave it unclaimed and explain the gap:
 {missing_str}
 3. FACTUAL INTEGRITY WITHOUT INVENTING UNTRUTHFUL CREDENTIALS: Contextualize, adapt, and frame the candidate's genuine experience, achievements, and responsibilities using the job description's phrasing and metrics. Do NOT invent fictitious employers, degrees, unearned certifications, or false credentials.
-4. FORMAT: Return JSON only. An object with a "suggestions" array.
+4. COVERAGE: Return every useful, distinct, source-supported rewrite across the target sections; prioritize specific job duties and skills over keyword repetition. Never promise or optimize toward a numeric score.
+5. FORMAT: Return JSON only. An object with a "suggestions" array.
 Each suggestion must include:
 - "section": Exactly one of: {", ".join(SECTIONS)}
 - "original_text": A verbatim excerpt from the candidate's resume paragraph or bullet point to be replaced.
-- "proposed_text": The tailored rewrite actively incorporating the target missing keywords/skills. Must be different from original_text.
+- "proposed_text": A truthful rewrite supported by source text. Do not add missing skills/keywords unless the source supports the claim.
 - "reason": Why this rewrite strengthens role alignment.
-- "requirement": The missing job description terms or skills woven in.
+- "requirement": Relevant job-description terms addressed by the supported rewrite.
 - "expected_impact": Anticipated match improvement.
 
 Additional user instruction: {instructions or "None"}.
@@ -1007,6 +1025,52 @@ def update_tailored_state(payload: dict) -> None:
     payload["final_score"] = score
 
 
+def normalize_export_text(text: str) -> str:
+    text = unicodedata.normalize("NFC", text)
+    text = re.sub(r"[•●▪◦‣⁃]", " - ", text)
+    text = text.translate(str.maketrans({
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        "‘": "'",
+        "’": "'",
+        "“": '"',
+        "”": '"',
+    }))
+    text = "".join(
+        character for character in text
+        if unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def pdf_compatible_text(text: str) -> str:
+    normalized = normalize_export_text(text)
+    return normalized.encode("cp1252", errors="replace").decode("cp1252")
+
+
+def normalize_download_text(text: str) -> list[str]:
+    normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
+    lines = []
+    for line in normalized.split("\n"):
+        line = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
+        line = re.sub(r"^\s*[-*+•●▪◦‣⁃]\s+", "- ", line)
+        line = re.sub(r"\*\*(.*?)\*\*|__(.*?)__", lambda match: match.group(1) or match.group(2), line)
+        line = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)|(?<!_)_([^_]+)_(?!_)", lambda match: match.group(1) or match.group(2), line)
+        line = line.replace("`", "")
+        line = "".join(
+            " " if unicodedata.category(character) == "Cc" else character
+            for character in line
+            if unicodedata.category(character) not in {"Cf", "Cs"}
+        )
+        lines.append(re.sub(r"[ \t]+", " ", line).strip())
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def validate_docx_text_budget(payload: dict) -> None:
     replacements: dict[int, str] = {}
     for suggestion in payload["suggestions"]:
@@ -1018,7 +1082,8 @@ def validate_docx_text_budget(payload: dict) -> None:
         if index in replacements:
             raise HTTPException(status_code=422, detail="Multiple approved changes target the same paragraph.")
         original = payload["paragraphs"][index]
-        proposed = suggestion["proposed_text"]
+        proposed = normalize_export_text(suggestion["proposed_text"])
+        suggestion["proposed_text"] = proposed
         if len(proposed) > len(original):
             raise HTTPException(
                 status_code=422,
@@ -1072,6 +1137,14 @@ def generate_docx(payload: dict, source_path: Path, destination: Path) -> None:
 
 
 def create_pdf_from_text(texts: list[str], destination: Path) -> None:
+    output = build_pdf_bytes(texts)
+    try:
+        destination.write_bytes(output)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="The PDF could not be written. Your original resume is unchanged.") from exc
+
+
+def build_pdf_bytes(texts: list[str]) -> bytes:
     styles = getSampleStyleSheet()
     normal = ParagraphStyle(
         "Resume",
@@ -1084,7 +1157,8 @@ def create_pdf_from_text(texts: list[str], destination: Path) -> None:
         textColor=colors.HexColor("#1d2b3c"),
     )
     story = []
-    for text in texts:
+    for source_text in texts:
+        text = pdf_compatible_text(source_text)
         if not text:
             story.append(Spacer(1, 3))
         elif text.strip().casefold() in {
@@ -1094,9 +1168,10 @@ def create_pdf_from_text(texts: list[str], destination: Path) -> None:
             story.append(PdfParagraph(f"<b>{html.escape(text)}</b>", normal))
         else:
             story.append(PdfParagraph(html.escape(text).replace("\n", "<br/>"), normal))
+    output = io.BytesIO()
     try:
         SimpleDocTemplate(
-            str(destination),
+            output,
             pagesize=letter,
             leftMargin=0.7 * inch,
             rightMargin=0.7 * inch,
@@ -1106,6 +1181,7 @@ def create_pdf_from_text(texts: list[str], destination: Path) -> None:
         ).build(story)
     except (OSError, ValueError, LayoutError) as exc:
         raise HTTPException(status_code=500, detail="The PDF could not be generated. Your original resume is unchanged.") from exc
+    return output.getvalue()
 
 
 def generate_pdf(payload: dict, tailored_docx: Path, destination: Path) -> None:
@@ -1349,14 +1425,14 @@ def update_suggestion(workflow_id: str, item_id: str, body: SuggestionAction):
     if body.action == "edit":
         if body.proposed_text is None or not body.proposed_text.strip():
             raise HTTPException(status_code=422, detail="Enter replacement text before saving an edit.")
-        suggestion["proposed_text"] = body.proposed_text.strip()
+        suggestion["proposed_text"] = normalize_export_text(body.proposed_text)
         suggestion["status"] = "pending"
     elif body.action == "undo":
         suggestion["proposed_text"] = suggestion["suggested_text"]
         suggestion["status"] = "pending"
     else:
         if body.action == "approve" and body.proposed_text and body.proposed_text.strip():
-            suggestion["proposed_text"] = body.proposed_text.strip()
+            suggestion["proposed_text"] = normalize_export_text(body.proposed_text)
         suggestion["status"] = "approved" if body.action == "approve" else "rejected"
     invalidate_exports(workflow_id, payload)
     update_tailored_state(payload)
@@ -1420,9 +1496,7 @@ def apply_instructions(workflow_id: str, body: InstructionRequest):
     return response_payload(record, payload)
 
 
-@app.post("/api/workflows/{workflow_id}/finalize")
-def finalize_workflow(workflow_id: str):
-    record, payload = get_workflow(workflow_id)
+def build_final_resume(workflow_id: str, record: WorkflowRecord, payload: dict) -> None:
     unresolved = [item["section"] for item in payload["suggestions"] if item["status"] == "pending"]
     if unresolved:
         raise HTTPException(status_code=409, detail="Review every suggestion first: approve or reject each one before generating the final resume.")
@@ -1444,6 +1518,12 @@ def finalize_workflow(workflow_id: str):
     payload["layout_review"] = check_layout(payload, source_path, pdf_path)
     payload["finalized"] = True
     save_workflow(record, payload)
+
+
+@app.post("/api/workflows/{workflow_id}/finalize")
+def finalize_workflow(workflow_id: str):
+    record, payload = get_workflow(workflow_id)
+    build_final_resume(workflow_id, record, payload)
     return response_payload(record, payload)
 
 
@@ -1462,6 +1542,100 @@ def download_final(workflow_id: str, file_format: Literal["pdf", "docx"]):
     filename = f"{Path(record.filename).stem}-resumefit.{file_format}"
     media_type = "application/pdf" if file_format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     return FileResponse(DATA_ROOT / workflow_id / f"tailored.{file_format}", media_type=media_type, filename=filename)
+
+
+@app.post("/api/download/{file_format}")
+def download_resume(file_format: Literal["pdf", "docx"], body: DownloadRequest):
+    record, payload = get_workflow(body.workflow_id)
+    if any(item["status"] == "pending" for item in payload["suggestions"]):
+        raise HTTPException(
+            status_code=409,
+            detail="Approve or reject every suggestion before downloading the tailored resume.",
+        )
+
+    lines = normalize_download_text(body.text)
+    expected_lines = normalize_download_text(
+        "\n".join(approved_paragraphs(payload))
+    )
+    if not lines or lines != expected_lines:
+        raise HTTPException(
+            status_code=409,
+            detail="The preview text is out of date or does not match approved changes. Refresh the workflow and try again.",
+        )
+
+    if file_format == "docx":
+        document = Document()
+        for line in lines:
+            if not line:
+                document.add_paragraph()
+            elif line.casefold() in {
+                alias for aliases in SECTION_ALIASES.values() for alias in aliases
+            }:
+                document.add_paragraph(line, style="Heading 2")
+            else:
+                document.add_paragraph(line)
+        output = io.BytesIO()
+        try:
+            document.save(output)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail="The DOCX could not be generated.") from exc
+        content = output.getvalue()
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        content = build_pdf_bytes(lines)
+        media_type = "application/pdf"
+
+    filename = f"{Path(record.filename).stem}-resumefit.{file_format}"
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/workflows/{workflow_id}/download/{file_format}")
+def export_final(
+    workflow_id: str,
+    file_format: Literal["pdf", "docx"],
+    body: ResumeExportRequest,
+):
+    record, payload = get_workflow(workflow_id)
+    submitted = {item.id: item for item in body.suggestions}
+    stored_ids = {item["id"] for item in payload["suggestions"]}
+    if len(submitted) != len(body.suggestions) or submitted.keys() != stored_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="The submitted suggestion state does not match this workflow. Refresh the review and try again.",
+        )
+    if any(item.status == "pending" for item in body.suggestions):
+        raise HTTPException(
+            status_code=409,
+            detail="Approve or reject every suggestion before downloading the tailored resume.",
+        )
+
+    for suggestion in payload["suggestions"]:
+        state = submitted[suggestion["id"]]
+        suggestion["status"] = state.status
+        suggestion["proposed_text"] = normalize_export_text(state.proposed_text)
+        if state.status == "approved" and not suggestion["proposed_text"]:
+            raise HTTPException(status_code=422, detail="An approved replacement cannot be empty.")
+
+    invalidate_exports(workflow_id, payload)
+    update_tailored_state(payload)
+    save_workflow(record, payload)
+    build_final_resume(workflow_id, record, payload)
+
+    filename = f"{Path(record.filename).stem}-resumefit.{file_format}"
+    media_type = (
+        "application/pdf"
+        if file_format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(
+        DATA_ROOT / workflow_id / f"tailored.{file_format}",
+        media_type=media_type,
+        filename=filename,
+    )
 
 
 @app.delete("/api/workflows/{workflow_id}")

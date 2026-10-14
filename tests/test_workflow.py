@@ -157,6 +157,125 @@ def test_docx_approval_edit_export_and_delete(isolated_workspace):
     assert client.get(f"/api/workflows/{workflow_id}").status_code == 404
 
 
+def test_post_export_reconciles_suggestion_state_and_returns_sanitized_attachments(isolated_workspace):
+    workflow = analyze("resume.docx", upload_docx())
+    workflow_id = workflow["id"]
+    pending_export = client.post(
+        f"/api/workflows/{workflow_id}/download/docx",
+        json={
+            "suggestions": [
+                {
+                    "id": suggestion["id"],
+                    "status": suggestion["status"],
+                    "proposed_text": suggestion["proposed_text"],
+                }
+                for suggestion in workflow["suggestions"]
+            ]
+        },
+    )
+    assert pending_export.status_code == 409
+    skills = next(item for item in workflow["suggestions"] if item["section"] == "Skills")
+    edited_text = "• SQL, Excel, productivity benchmarks"
+    updated = client.patch(
+        f"/api/workflows/{workflow_id}/suggestions/{skills['id']}",
+        json={"action": "approve", "proposed_text": edited_text},
+    )
+    assert updated.status_code == 200, updated.text
+
+    for suggestion in updated.json()["suggestions"]:
+        if suggestion["status"] == "pending":
+            rejected = client.patch(
+                f"/api/workflows/{workflow_id}/suggestions/{suggestion['id']}",
+                json={"action": "reject"},
+            )
+            assert rejected.status_code == 200, rejected.text
+
+    current = client.get(f"/api/workflows/{workflow_id}").json()
+    export_state = {
+        "suggestions": [
+            {
+                "id": suggestion["id"],
+                "status": suggestion["status"],
+                "proposed_text": suggestion["proposed_text"],
+            }
+            for suggestion in current["suggestions"]
+        ]
+    }
+    docx_response = client.post(
+        f"/api/workflows/{workflow_id}/download/docx",
+        json=export_state,
+    )
+    assert docx_response.status_code == 200, docx_response.text
+    assert "attachment" in docx_response.headers["content-disposition"]
+    exported_docx = Document(BytesIO(docx_response.content))
+    assert "- SQL, Excel, productivity benchmarks" in "\n".join(
+        paragraph.text for paragraph in exported_docx.paragraphs
+    )
+
+    pdf_response = client.post(
+        f"/api/workflows/{workflow_id}/download/pdf",
+        json=export_state,
+    )
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert "attachment" in pdf_response.headers["content-disposition"]
+    pdf = fitz.open(stream=pdf_response.content, filetype="pdf")
+    assert "SQL, Excel, productivity benchmarks" in "\n".join(
+        page.get_text() for page in pdf
+    )
+    pdf.close()
+    remove_workflow(workflow_id)
+
+
+def test_direct_download_route_builds_from_preview_text_in_memory(isolated_workspace):
+    workflow = analyze("resume.docx", upload_docx())
+    workflow_id = workflow["id"]
+    blocked = client.post(
+        "/api/download/pdf",
+        json={"workflow_id": workflow_id, "text": workflow["final_text"]},
+    )
+    assert blocked.status_code == 409
+    for suggestion in workflow["suggestions"]:
+        response = client.patch(
+            f"/api/workflows/{workflow_id}/suggestions/{suggestion['id']}",
+            json={"action": "reject"},
+        )
+        assert response.status_code == 200, response.text
+
+    current = client.get(f"/api/workflows/{workflow_id}").json()
+    preview_text = current["final_text"]
+    first_line, remaining_text = preview_text.split("\n", 1)
+    submitted_text = f"**{first_line}**\n{remaining_text}"
+
+    docx_response = client.post(
+        "/api/download/docx",
+        json={"workflow_id": workflow_id, "text": submitted_text},
+    )
+    assert docx_response.status_code == 200, docx_response.text
+    assert "attachment" in docx_response.headers["content-disposition"]
+    docx = Document(BytesIO(docx_response.content))
+    docx_lines = [paragraph.text for paragraph in docx.paragraphs]
+    assert docx_lines[0] == first_line
+    assert "Skills" in docx_lines
+    assert "Experience" in docx_lines
+
+    pdf_response = client.post(
+        "/api/download/pdf",
+        json={"workflow_id": workflow_id, "text": submitted_text},
+    )
+    assert pdf_response.status_code == 200, pdf_response.text
+    assert "attachment" in pdf_response.headers["content-disposition"]
+    pdf = fitz.open(stream=pdf_response.content, filetype="pdf")
+    pdf_text = "\n".join(page.get_text() for page in pdf)
+    assert first_line in pdf_text
+    assert "Skills" in pdf_text
+    pdf.close()
+
+    workflow_folder = main.DATA_ROOT / workflow_id
+    assert not (workflow_folder / "tailored.docx").exists()
+    assert not (workflow_folder / "tailored.pdf").exists()
+    remove_workflow(workflow_id)
+
+
 def test_docx_replacement_preserves_runs_and_embeds_styled_hyperlinks():
     doc = Document()
     paragraph = doc.add_paragraph()
@@ -319,6 +438,42 @@ def test_zero_overlap_still_offers_source_text_for_manual_editing(isolated_works
     assert suggestion["requirement"] == ""
     assert suggestion["source"] == "demo"
     assert "manual editing" in suggestion["reason"]
+
+
+def test_keyword_extraction_keeps_short_and_compound_job_terms():
+    details = main.score_resume(
+        "C# development and Node.js services",
+        "AI, UX, QA, C#, C++, R, Go, CI/CD, .NET, Node.js, cloud-native architecture.",
+    )
+
+    assert {"ai", "ux", "qa", "c#", "c++", "r", "go", "ci/cd", ".net", "node.js"} <= set(
+        details["matched_keywords"] + details["missing_keywords"]
+    )
+    assert {"c#", "node.js"} <= set(details["matched_keywords"])
+    assert {"ai", "ux", "qa", "c++", "r", "go", "ci/cd", ".net"} <= set(
+        details["missing_keywords"]
+    )
+
+
+def test_score_counts_curated_related_skill_equivalents_without_forcing_floor():
+    details = main.score_resume(
+        "Analysis capability, problem-solving, precision",
+        "Analytical capacity, critical thinking, attention to detail.",
+    )
+
+    assert details["score"] == 100
+    assert details["exact_matched_count"] == 0
+    assert details["semantic_matched_count"] == 6
+    assert details["missing_keywords"] == []
+    assert details["semantic_matches"]["critical"] == ["problem-solving"]
+    assert "not machine-understood meaning" in details["method"]
+
+    unrelated = main.score_resume(
+        "Managed schedules and maintained records",
+        "Analytical capacity, critical thinking, attention to detail.",
+    )
+    assert unrelated["score"] == 0
+    assert len(unrelated["missing_keywords"]) == unrelated["requirement_count"]
 
 
 def test_empty_gemini_result_keeps_manual_editing_available_for_instructions(
@@ -512,7 +667,7 @@ def test_approved_section_replacement_and_live_dynamic_score(isolated_workspace)
     assert baseline_score < 100
 
     skills = next(item for item in workflow["suggestions"] if item["section"] == "Skills")
-    # Commit approved edit with missing JD keywords ("productivity", "benchmarks.")
+    # Commit approved edit with missing JD keywords ("productivity", "benchmarks").
     tailored_text_block = "SQL, Excel, productivity benchmarks."
     response = client.patch(
         f"/api/workflows/{workflow_id}/suggestions/{skills['id']}",
@@ -533,7 +688,7 @@ def test_approved_section_replacement_and_live_dynamic_score(isolated_workspace)
     point_variance = data["final_score"] - baseline_score
     assert point_variance > 0
     assert "productivity" in data["final_score_details"]["matched_keywords"]
-    assert "benchmarks." in data["final_score_details"]["matched_keywords"]
+    assert "benchmarks" in data["final_score_details"]["matched_keywords"]
 
     persisted = client.get(f"/api/workflows/{workflow_id}")
     assert persisted.status_code == 200, persisted.text
@@ -594,9 +749,42 @@ def test_generative_rewrite_inverse_reconciliation_zero_overlap(monkeypatch):
     assert suggestion["proposed_text"] != suggestion["original_text"]
 
 
+def test_gemini_prompt_receives_every_missing_keyword(monkeypatch):
+    keywords = [f"specialty{i}" for i in range(31)]
+    captured_prompt = {}
+    response_payload = {
+        "candidates": [{
+            "content": {
+                "parts": [{"text": json.dumps({"suggestions": []})}]
+            }
+        }]
+    }
+
+    class MockResponse:
+        def read(self):
+            return json.dumps(response_payload).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            pass
+
+    def capture_request(request, **_kwargs):
+        body = json.loads(request.data)
+        captured_prompt["text"] = body["contents"][0]["parts"][0]["text"]
+        return MockResponse()
+
+    monkeypatch.setattr(main, "urlopen", capture_request)
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-api-key")
+    main.call_gemini_suggestions("entry level resume", " ".join(keywords))
+
+    keyword_context = captured_prompt["text"].split("JOB DESCRIPTION:", 1)[0]
+    assert all(keyword in keyword_context for keyword in keywords)
+
+
 def test_end_to_end_data_stream_convergence_docx_and_pdf(isolated_workspace):
     workflow = analyze("resume.docx", upload_docx())
     workflow_id = workflow["id"]
+    assert workflow["download_urls"] is None
     skills = next(item for item in workflow["suggestions"] if item["section"] == "Skills")
     tailored_text_block = "SQL, Excel, productivity benchmarks"
 
@@ -617,6 +805,8 @@ def test_end_to_end_data_stream_convergence_docx_and_pdf(isolated_workspace):
     assert finalized.status_code == 200, finalized.text
     result = finalized.json()
     assert result["finalized"] is True
+    assert result["download_urls"]["docx"].endswith("/download/docx")
+    assert result["download_urls"]["pdf"].endswith("/download/pdf")
 
     # Check python-docx writer output
     tailored_docx_resp = client.get(result["download_urls"]["docx"])
