@@ -1,0 +1,29 @@
+Description
+The Last Mile Analytics & Quality Team is seeking a Quality Associate who will serve as the first line of support for address resolution, geocode correction, map edits, driver support, static route management, and other operational activities related to the Transportation process and optimization. Your contributions will have a direct and significant impact on our customers' experience.
+This role demands quick learning and the ability to manage overlapping tasks, which are crucial to your success. You will have the opportunity to address high-impact production issues that often require coordination among multiple stakeholders and operations groups, providing you with a broad perspective on the business.
+Roles and Responsibilities: This includes, but is not limited to:
+• Follow Standard Operating Procedures (SOPs) to perform manual audits and resolve outliers/exceptions, including through internal tools and systems.
+• Investigate images/videos and provide recommended actions in accordance with SOPs.
+• Listen to customer calls, transcribing text from calls, emails, when necessary to resolve issues.
+• Identify patterns emerging from audits and contribute to process/program improvements.
+• Provide timely responses to stakeholders on related tasks as per SOP and SLA.
+• Systematically escalate problems to relevant owners/teams according to pre-determined processes.
+• Maintain records of day-to-day work by updating trackers or workflow tools.
+• Meet business metrics and goals, including SLA, productivity, quality, and utilization benchmarks.
+• Understand performance metrics and leverage them to drive business goals.
+• Work in a collaborative environment and contribute to the growth of the respective team/program.
+• Develop a global perspective and understand the nuances of various geographies that Amazon operates in.
+• Be flexible to work on multiple programs as per business requirements.
+•
+**Shifts: Rotational (This is a 24x7 shift environment, and shifts are rotational based on business requirements).
+**Weekly Off: Rotational (5-day work week with 2 consecutive days off, which may change based on business requirements).
+* Work from Office Role
+
+Basic Qualifications
+- Bachelor's degree in a quantitative/technical field such as computer science, engineering, statistics
+- Experience in written and oral communication, including the ability to communicate with all levels in the organization (technical, business, executive)
+- Speak, write, and read fluently in English, and have the ability to take direction in English
+
+Preferred Qualifications
+- Experience with SQL
+- Experience with Microsoft Excel
