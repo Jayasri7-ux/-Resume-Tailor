@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 
 import fitz
 import pytest
@@ -502,3 +503,133 @@ def test_upload_validation(isolated_workspace):
         data={"job_description": JOB_DESCRIPTION},
     )
     assert invalid_docx.status_code == 422
+
+
+def test_approved_section_replacement_and_live_dynamic_score(isolated_workspace):
+    workflow = analyze("resume.docx", upload_docx())
+    workflow_id = workflow["id"]
+    baseline_score = workflow["analysis"]["score"]
+    assert baseline_score < 100
+
+    skills = next(item for item in workflow["suggestions"] if item["section"] == "Skills")
+    # Commit approved edit with missing JD keywords ("productivity", "benchmarks.")
+    tailored_text_block = "SQL, Excel, productivity benchmarks."
+    response = client.patch(
+        f"/api/workflows/{workflow_id}/suggestions/{skills['id']}",
+        json={"action": "approve", "proposed_text": tailored_text_block},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # 1. Check approved sections replacement in payload
+    assert tailored_text_block in data["final_text"]
+    assert tailored_text_block in data["tailored_text"]
+    assert data["final_text"] != data["original_text"]
+
+    # 2. Check dynamic live score calculation progressing past baseline with positive variance
+    assert data["final_score"] is not None
+    assert data["tailored_score"] is not None
+    assert data["final_score"] > baseline_score
+    point_variance = data["final_score"] - baseline_score
+    assert point_variance > 0
+    assert "productivity" in data["final_score_details"]["matched_keywords"]
+    assert "benchmarks." in data["final_score_details"]["matched_keywords"]
+
+    persisted = client.get(f"/api/workflows/{workflow_id}")
+    assert persisted.status_code == 200, persisted.text
+    assert tailored_text_block in persisted.json()["final_text"]
+    assert persisted.json()["final_score"] == data["final_score"]
+    remove_workflow(workflow_id)
+
+
+def test_generative_rewrite_inverse_reconciliation_zero_overlap(monkeypatch):
+    resume_text = (
+        "Taylor Example\n"
+        "Summary\n"
+        "Customer service representative supporting inbound caller inquiries.\n"
+        "Experience\n"
+        "Answered telephone inquiries and filed customer support tickets."
+    )
+    job_description = (
+        "Senior Cloud Engineer who builds Python microservices, manages Kubernetes clusters, "
+        "and optimizes PostgreSQL database queries for high availability."
+    )
+    fake_gemini_payload = {
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "text": json.dumps({
+                        "suggestions": [{
+                            "section": "Experience",
+                            "original_text": "Answered telephone inquiries and filed customer support tickets.",
+                            "proposed_text": "Engineered Python services and managed Kubernetes clusters to automate support ticket workflows.",
+                            "reason": "Naturally integrates Python and Kubernetes cloud engineering skills into verified workflow automation.",
+                            "requirement": "Python, Kubernetes",
+                            "expected_impact": "Directly targets core JD requirements without inventing false degrees.",
+                        }]
+                    })
+                }]
+            }
+        }]
+    }
+
+    class MockResponse:
+        def read(self):
+            return json.dumps(fake_gemini_payload).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(main, "urlopen", lambda *args, **kwargs: MockResponse())
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-api-key")
+
+    validated, warnings = main.call_gemini_suggestions(resume_text, job_description)
+    assert len(validated) == 1
+    suggestion = validated[0]
+    assert suggestion["source"] == "gemini"
+    assert suggestion["section"] == "Experience"
+    assert "Python" in suggestion["proposed_text"]
+    assert "Kubernetes" in suggestion["proposed_text"]
+    assert suggestion["proposed_text"] != suggestion["original_text"]
+
+
+def test_end_to_end_data_stream_convergence_docx_and_pdf(isolated_workspace):
+    workflow = analyze("resume.docx", upload_docx())
+    workflow_id = workflow["id"]
+    skills = next(item for item in workflow["suggestions"] if item["section"] == "Skills")
+    tailored_text_block = "SQL, Excel, productivity benchmarks"
+
+    # Commit approved replacement
+    client.patch(
+        f"/api/workflows/{workflow_id}/suggestions/{skills['id']}",
+        json={"action": "approve", "proposed_text": tailored_text_block},
+    )
+    # Reject other pending to satisfy review requirement
+    for other in workflow["suggestions"]:
+        if other["id"] != skills["id"]:
+            client.patch(
+                f"/api/workflows/{workflow_id}/suggestions/{other['id']}",
+                json={"action": "reject"},
+            )
+
+    finalized = client.post(f"/api/workflows/{workflow_id}/finalize")
+    assert finalized.status_code == 200, finalized.text
+    result = finalized.json()
+    assert result["finalized"] is True
+
+    # Check python-docx writer output
+    tailored_docx_resp = client.get(result["download_urls"]["docx"])
+    assert tailored_docx_resp.status_code == 200
+    doc = Document(BytesIO(tailored_docx_resp.content))
+    docx_text = "\n".join(p.text for p in doc.paragraphs)
+    assert tailored_text_block in docx_text
+
+    # Check ReportLab PDF builder output
+    tailored_pdf_resp = client.get(result["download_urls"]["pdf"])
+    assert tailored_pdf_resp.status_code == 200
+    pdf = fitz.open(stream=tailored_pdf_resp.content, filetype="pdf")
+    pdf_text = "\n".join(page.get_text() for page in pdf)
+    pdf.close()
+    assert "productivity benchmarks" in pdf_text
+    remove_workflow(workflow_id)

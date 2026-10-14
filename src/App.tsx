@@ -46,6 +46,9 @@ type Workflow = {
   finalized: boolean;
   final_score: number | null;
   final_score_details: ScoreDetails | null;
+  tailored_text?: string | null;
+  tailored_score?: number | null;
+  tailored_score_details?: ScoreDetails | null;
   layout_review: string[];
   final_text: string | null;
   original_text: string;
@@ -202,8 +205,8 @@ function App() {
     }
   }
 
-  async function updateSuggestion(id: string, action: SuggestionAction, proposedText?: string) {
-    if (!workflow) return;
+  async function updateSuggestion(id: string, action: SuggestionAction, proposedText?: string): Promise<boolean> {
+    if (!workflow) return false;
     setBusyAction(id);
     setError("");
     try {
@@ -213,10 +216,19 @@ function App() {
         body: JSON.stringify({ action, proposed_text: proposedText }),
       });
       setWorkflow(result);
-      setNotice(action === "approve" ? "Change approved. It will appear in the final resume." : action === "reject" ? "Change rejected. Your original wording will be preserved." : "");
+      if (action === "approve") {
+        setPreview("comparison");
+        setNotice("Change approved. It now appears in the tailored resume preview.");
+      } else if (action === "edit") {
+        setNotice("Edit saved. Approve it when you are ready to apply it to the tailored resume.");
+      } else {
+        setNotice(action === "reject" ? "Change rejected. Your original wording will be preserved." : "");
+      }
       if (result.finalized === false && workflow.finalized) await refreshHistory();
+      return true;
     } catch (reason) {
       setError((reason as Error).message);
+      return false;
     } finally {
       setBusyAction("");
     }
@@ -233,6 +245,7 @@ function App() {
         body: JSON.stringify({ action }),
       });
       setWorkflow(result);
+      if (action === "approve") setPreview("comparison");
       setNotice(action === "approve" ? "All suggestions approved. Generate your tailored resume when ready." : "All suggestions rejected; the original wording will be preserved.");
     } catch (reason) {
       setError((reason as Error).message);
@@ -305,6 +318,11 @@ function App() {
   const pendingCount = workflow?.suggestions.filter((item) => item.status === "pending").length ?? 0;
   const approvedCount = workflow?.suggestions.filter((item) => item.status === "approved").length ?? 0;
   const rejectedCount = workflow?.suggestions.filter((item) => item.status === "rejected").length ?? 0;
+  const hasApprovedSuggestions = approvedCount > 0 || (workflow?.finalized ?? false);
+  const liveScore = workflow ? (workflow.final_score ?? workflow.tailored_score ?? null) : null;
+  const liveScoreDetails = workflow ? (workflow.final_score_details ?? workflow.tailored_score_details ?? null) : null;
+  const scoreVariance = liveScore !== null && workflow ? liveScore - workflow.analysis.score : 0;
+  const tailoredDisplay = workflow?.final_text || workflow?.tailored_text || "";
 
   return (
     <div className="app-shell">
@@ -413,15 +431,15 @@ function App() {
                       <div className="card-label-row"><div><span className="mini-icon mini-blue"><Gauge size={16} /></span><span className="card-eyebrow">ORIGINAL RESUME</span></div><span className="muted-label">JD match estimate</span></div>
                       <div className="score-content"><ScoreRing score={workflow.analysis.score} /><div><strong className="score-heading">{workflow.analysis.score < 40 ? "Room to align" : workflow.analysis.score < 70 ? "Good foundation" : "Strong alignment"}</strong><p>{workflow.analysis.matched_count} of {workflow.analysis.requirement_count} distinct JD terms found in your resume.</p><span className="score-footnote">Not an ATS score or interview prediction</span></div></div>
                     </div>
-                    {workflow.finalized && workflow.final_score !== null ? (
+                    {hasApprovedSuggestions && liveScore !== null ? (
                       <div className="card tailored-score-card">
-                        <div className="card-label-row"><div><span className="mini-icon mini-green"><ArrowUpRight size={17} /></span><span className="card-eyebrow">TAILORED RESUME</span></div><span className="muted-label">Same JD criteria</span></div>
-                        <div className="score-content"><ScoreRing score={workflow.final_score} /><div><strong className="score-heading">{workflow.final_score >= workflow.analysis.score ? "Thoughtfully tailored" : "Verified match"}</strong><p>{workflow.final_score_details?.matched_count} of {workflow.final_score_details?.requirement_count} distinct JD terms found.</p><span className={`improvement-chip ${(workflow.final_score - workflow.analysis.score) >= 0 ? "" : "improvement-down"}`}>{(workflow.final_score - workflow.analysis.score) >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{(workflow.final_score - workflow.analysis.score) >= 0 ? "+" : ""}{workflow.final_score - workflow.analysis.score} pts <span>estimated change</span></span></div></div>
+                        <div className="card-label-row"><div><span className="mini-icon mini-green"><ArrowUpRight size={17} /></span><span className="card-eyebrow">TAILORED RESUME</span></div><span className="muted-label">Live match estimate</span></div>
+                        <div className="score-content"><ScoreRing score={liveScore} /><div><strong className="score-heading">{liveScore >= workflow.analysis.score ? "Thoughtfully tailored" : "Verified match"}</strong><p>{liveScoreDetails?.matched_count ?? workflow.analysis.matched_count} of {liveScoreDetails?.requirement_count ?? workflow.analysis.requirement_count} distinct JD terms found.</p><span className={`improvement-chip ${scoreVariance >= 0 ? "" : "improvement-down"}`}>{scoreVariance >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{scoreVariance >= 0 ? "+" : ""}{scoreVariance} pts <span>estimated change</span></span></div></div>
                       </div>
                     ) : (
                       <div className="card score-placeholder">
-                        <div className="card-label-row"><div><span className="mini-icon mini-violet"><Sparkles size={15} /></span><span className="card-eyebrow">TAILORED RESUME</span></div><span className="muted-label">After your review</span></div>
-                        <div className="placeholder-body"><span className="placeholder-lock"><LockKeyhole size={18} /></span><div><strong>Your next score comes after you approve.</strong><p>We only score the actual resume text after your approved edits are applied.</p></div></div>
+                        <div className="card-label-row"><div><span className="mini-icon mini-violet"><Sparkles size={15} /></span><span className="card-eyebrow">TAILORED RESUME</span></div><span className="muted-label">Live match estimate</span></div>
+                        <div className="placeholder-body"><span className="placeholder-lock"><LockKeyhole size={18} /></span><div><strong>Your next score updates live as you approve.</strong><p>Approve or edit suggestions below to incorporate missing JD keywords and boost your score.</p></div></div>
                       </div>
                     )}
                   </section>
@@ -449,13 +467,25 @@ function App() {
                     </div>
                   </section>
 
-                  {workflow.finalized && workflow.final_text ? (
+                  {hasApprovedSuggestions && !workflow.finalized && tailoredDisplay && (
+                    <section className="card final-card" style={{ marginBottom: "14px" }}>
+                      <div className="card-label-row" style={{ marginBottom: "12px" }}>
+                        <div><span className="mini-icon mini-green"><Sparkles size={16} /></span><span className="card-eyebrow">TAILORED RESUME (LIVE PREVIEW)</span></div>
+                        <span className="muted-label">{approvedCount} approved change{approvedCount === 1 ? "" : "s"} applied</span>
+                      </div>
+                      <div className="preview-tabs" role="tablist" aria-label="Resume live preview options">{([["comparison", "Side by side"], ["original", "Original resume"], ["tailored", "Tailored resume"]] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={preview === id} className={preview === id ? "preview-tab-active" : ""} onClick={() => setPreview(id)}>{label}</button>)}</div>
+                      {preview === "comparison" ? <div className="comparison-grid"><ResumeTextPanel title="Original resume" text={workflow.original_text} badge="UNCHANGED" /><ResumeTextPanel title="Tailored resume" text={tailoredDisplay} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted /></div> : preview === "original" ? <ResumeTextPanel title="Original resume — unchanged" text={workflow.original_text} badge="ORIGINAL" /> : <ResumeTextPanel title="Tailored resume — approved changes only" text={tailoredDisplay} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted />}
+                      <div className="final-score-compare"><div><span>Original</span><strong>{workflow.analysis.score}/100</strong></div><ArrowRight size={16} /><div><span>Tailored (Live)</span><strong>{liveScore}/100</strong></div><div className={`final-score-delta ${scoreVariance >= 0 ? "" : "improvement-down"}`}>{scoreVariance >= 0 ? "+" : ""}{scoreVariance} pts</div></div>
+                    </section>
+                  )}
+
+                  {workflow.finalized && tailoredDisplay ? (
                     <section className="card final-card">
                       <div className="final-heading"><div className="final-check"><Check size={18} /></div><div><span className="section-kicker">ALL SET</span><h2>Your tailored resume is ready</h2><p>Your unchanged original is safe. Only approved edits were applied.</p></div></div>
                       <div className="preview-tabs" role="tablist" aria-label="Resume preview options">{([["comparison", "Side by side"], ["original", "Original resume"], ["tailored", "Tailored resume"]] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={preview === id} className={preview === id ? "preview-tab-active" : ""} onClick={() => setPreview(id)}>{label}</button>)}</div>
-                      {preview === "comparison" ? <div className="comparison-grid"><ResumeTextPanel title="Original resume" text={workflow.original_text} badge="UNCHANGED" /><ResumeTextPanel title="Tailored resume" text={workflow.final_text} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted /></div> : preview === "original" ? <ResumeTextPanel title="Original resume — unchanged" text={workflow.original_text} badge="ORIGINAL" /> : <ResumeTextPanel title="Tailored resume — approved changes only" text={workflow.final_text} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted />}
-                      <div className="final-score-compare"><div><span>Original</span><strong>{workflow.analysis.score}/100</strong></div><ArrowRight size={16} /><div><span>Tailored</span><strong>{workflow.final_score}/100</strong></div><div className={`final-score-delta ${(workflow.final_score! - workflow.analysis.score) >= 0 ? "" : "improvement-down"}`}>{(workflow.final_score! - workflow.analysis.score) >= 0 ? "+" : ""}{workflow.final_score! - workflow.analysis.score} pts</div></div>
-                      <div className="remaining-gaps"><span className="remaining-icon"><Lightbulb size={15} /></span><div><strong>Still not explicit in the tailored text</strong><div className="keyword-list">{(showAllMissingKeywords ? workflow.final_score_details?.missing_keywords ?? [] : (workflow.final_score_details?.missing_keywords ?? []).slice(0, 14)).map((word) => <span className="keyword keyword-missing" key={word}>{word}</span>)}{(workflow.final_score_details?.missing_keywords.length ?? 0) > 14 && <button className="text-action" onClick={() => setShowAllMissingKeywords(!showAllMissingKeywords)}>{showAllMissingKeywords ? "Show fewer terms" : `Show all ${workflow.final_score_details?.missing_keywords.length} terms`}</button>}{!workflow.final_score_details?.missing_keywords.length && <span className="empty-copy">All analyzed JD terms are present. This still is not an ATS guarantee.</span>}</div></div></div>
+                      {preview === "comparison" ? <div className="comparison-grid"><ResumeTextPanel title="Original resume" text={workflow.original_text} badge="UNCHANGED" /><ResumeTextPanel title="Tailored resume" text={tailoredDisplay} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted /></div> : preview === "original" ? <ResumeTextPanel title="Original resume — unchanged" text={workflow.original_text} badge="ORIGINAL" /> : <ResumeTextPanel title="Tailored resume — approved changes only" text={tailoredDisplay} badge={`${approvedCount} APPROVED EDIT${approvedCount === 1 ? "" : "S"}`} highlighted />}
+                      <div className="final-score-compare"><div><span>Original</span><strong>{workflow.analysis.score}/100</strong></div><ArrowRight size={16} /><div><span>Tailored</span><strong>{liveScore}/100</strong></div><div className={`final-score-delta ${scoreVariance >= 0 ? "" : "improvement-down"}`}>{scoreVariance >= 0 ? "+" : ""}{scoreVariance} pts</div></div>
+                      <div className="remaining-gaps"><span className="remaining-icon"><Lightbulb size={15} /></span><div><strong>Still not explicit in the tailored text</strong><div className="keyword-list">{(showAllMissingKeywords ? liveScoreDetails?.missing_keywords ?? [] : (liveScoreDetails?.missing_keywords ?? []).slice(0, 14)).map((word) => <span className="keyword keyword-missing" key={word}>{word}</span>)}{(liveScoreDetails?.missing_keywords.length ?? 0) > 14 && <button className="text-action" onClick={() => setShowAllMissingKeywords(!showAllMissingKeywords)}>{showAllMissingKeywords ? "Show fewer terms" : `Show all ${liveScoreDetails?.missing_keywords.length} terms`}</button>}{!liveScoreDetails?.missing_keywords.length && <span className="empty-copy">All analyzed JD terms are present. This still is not an ATS guarantee.</span>}</div></div></div>
                       {workflow.layout_review.map((check) => <div className="limitation-note" key={check}><TriangleAlert size={14} />{check}</div>)}
                       {workflow.limitations.map((limitation) => <div className="limitation-note" key={limitation}><CircleHelp size={14} />{limitation}</div>)}
                       <div className="download-row"><a className="button button-download" href={`/api/workflows/${workflow.id}/download/docx`} download><FileDown size={16} />Download DOCX</a><a className="button button-download-secondary" href={`/api/workflows/${workflow.id}/download/pdf`} download><Download size={16} />Download PDF</a><a className="original-link" href={`/api/workflows/${workflow.id}/original`} download><FileText size={15} />Download unchanged original</a><button className="return-edit" onClick={() => { setWorkflow({ ...workflow, finalized: false }); setNotice("Return to your suggestions and make another round of edits."); }}><Pencil size={14} />Return to editing</button></div>
@@ -505,7 +535,7 @@ function FilePicker({ file, onFile }: { file: File | null; onFile: (file: File |
   );
 }
 
-function SuggestionCard({ suggestion, busy, onAction }: { suggestion: Suggestion; busy: boolean; onAction: (id: string, action: SuggestionAction, text?: string) => Promise<void> }) {
+function SuggestionCard({ suggestion, busy, onAction }: { suggestion: Suggestion; busy: boolean; onAction: (id: string, action: SuggestionAction, text?: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(suggestion.proposed_text);
   const [showDifference, setShowDifference] = useState(false);
@@ -514,8 +544,7 @@ function SuggestionCard({ suggestion, busy, onAction }: { suggestion: Suggestion
   const hasChange = suggestion.proposed_text.trim() !== suggestion.original_text.trim();
 
   async function saveEdit() {
-    await onAction(suggestion.id, "edit", draft);
-    setEditing(false);
+    if (await onAction(suggestion.id, "edit", draft)) setEditing(false);
   }
   function toggleEdit() {
     setDraft(suggestion.proposed_text);
