@@ -1,0 +1,492 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-10-16",
+  "core_domains": {
+    "Full Stack Development": {
+      "description": "End-to-end development of client-side user interfaces, server-side APIs, and database persistence layers.",
+      "suitable_roles": [
+        "Full Stack Developer",
+        "Python Full Stack Developer",
+        "Web Application Developer",
+        "Software Engineer - Full Stack"
+      ],
+      "primary_technologies": [
+        "python",
+        "django",
+        "react",
+        "javascript",
+        "html",
+        "css",
+        "node.js",
+        "sql",
+        "mongodb",
+        "rest api",
+        "jwt"
+      ]
+    },
+    "Backend Development": {
+      "description": "Server-side business logic, microservices, REST/GraphQL APIs, database modeling, and caching systems.",
+      "suitable_roles": [
+        "Backend Developer",
+        "Python Backend Developer",
+        "API Developer",
+        "Software Development Engineer"
+      ],
+      "primary_technologies": [
+        "python",
+        "django",
+        "flask",
+        "fastapi",
+        "node.js",
+        "express",
+        "sql",
+        "postgresql",
+        "mongodb",
+        "redis",
+        "rest api"
+      ]
+    },
+    "Frontend Development": {
+      "description": "Client-side architecture, responsive user interfaces, component design, and state management.",
+      "suitable_roles": [
+        "Frontend Developer",
+        "React Developer",
+        "UI Engineer",
+        "Web Developer"
+      ],
+      "primary_technologies": [
+        "react",
+        "javascript",
+        "typescript",
+        "html",
+        "css",
+        "tailwind css",
+        "redux",
+        "bootstrap",
+        "vite"
+      ]
+    },
+    "Data Engineering & Analytics": {
+      "description": "Building automated ETL data pipelines, processing large datasets, reporting dashboards, and analytics.",
+      "suitable_roles": [
+        "Data Analyst",
+        "Junior Data Engineer",
+        "Python Data Analyst",
+        "BI Analyst"
+      ],
+      "primary_technologies": [
+        "python",
+        "pandas",
+        "numpy",
+        "sql",
+        "scikit-learn",
+        "nlp",
+        "data analysis",
+        "mongodb",
+        "excel",
+        "tableau"
+      ]
+    },
+    "Cloud & DevOps": {
+      "description": "Infrastructure automation, containerization, continuous integration, deployment, and cloud operations.",
+      "suitable_roles": [
+        "DevOps Engineer",
+        "Cloud Engineer",
+        "Site Reliability Engineer"
+      ],
+      "primary_technologies": [
+        "docker",
+        "kubernetes",
+        "aws",
+        "azure",
+        "gcp",
+        "ci/cd",
+        "linux",
+        "terraform",
+        "jenkins",
+        "nginx"
+      ]
+    },
+    "Artificial Intelligence & Machine Learning": {
+      "description": "Training and evaluating predictive models, NLP text classifiers, and deploying AI assistants.",
+      "suitable_roles": [
+        "Machine Learning Engineer",
+        "AI Developer",
+        "NLP Engineer"
+      ],
+      "primary_technologies": [
+        "python",
+        "scikit-learn",
+        "nlp",
+        "tensorflow",
+        "pytorch",
+        "pandas",
+        "numpy",
+        "hugging face",
+        "deep learning"
+      ]
+    },
+    "Quality Assurance & Testing": {
+      "description": "Automated test suites, unit testing, API test validation, and quality auditing processes.",
+      "suitable_roles": [
+        "QA Engineer",
+        "Software Test Engineer",
+        "Quality Associate"
+      ],
+      "primary_technologies": [
+        "unit testing",
+        "integration testing",
+        "tdd",
+        "postman",
+        "quality audits",
+        "stakeholder communication"
+      ]
+    }
+  },
+  "technologies_by_category": {
+    "programming_languages": [
+      "python",
+      "java",
+      "javascript",
+      "typescript",
+      "c",
+      "c++",
+      "c#",
+      "go",
+      "rust",
+      "sql",
+      "r",
+      "php",
+      "ruby",
+      "kotlin",
+      "swift",
+      "dart",
+      "scala",
+      "bash",
+      "shell",
+      "powershell"
+    ],
+    "frontend_frameworks_and_libraries": [
+      "react",
+      "react.js",
+      "reactjs",
+      "next.js",
+      "nextjs",
+      "angular",
+      "vue",
+      "vue.js",
+      "vuejs",
+      "svelte",
+      "html",
+      "html5",
+      "css",
+      "css3",
+      "tailwind css",
+      "tailwind",
+      "bootstrap",
+      "redux",
+      "sass",
+      "less",
+      "vite",
+      "webpack",
+      "jquery",
+      "zustand",
+      "ui",
+      "ux"
+    ],
+    "backend_frameworks_and_runtimes": [
+      ".net",
+      "net",
+      "django",
+      "django rest framework",
+      "drf",
+      "flask",
+      "fastapi",
+      "node.js",
+      "nodejs",
+      "express",
+      "express.js",
+      "expressjs",
+      "spring boot",
+      "spring",
+      "asp.net",
+      "asp.net core",
+      "nestjs",
+      "ruby on rails",
+      "rails",
+      "laravel",
+      "gin",
+      "fastify"
+    ],
+    "databases_and_storage": [
+      "sql",
+      "postgresql",
+      "postgres",
+      "mysql",
+      "mongodb",
+      "sqlite",
+      "redis",
+      "cassandra",
+      "dynamodb",
+      "oracle",
+      "elasticsearch",
+      "mariadb",
+      "couchdb",
+      "neo4j",
+      "firestore",
+      "supabase",
+      "snowflake",
+      "bigquery",
+      "redshift",
+      "memcached"
+    ],
+    "developer_tools_and_platforms": [
+      "git",
+      "github",
+      "gitlab",
+      "bitbucket",
+      "vs code",
+      "vscode",
+      "visual studio code",
+      "postman",
+      "render",
+      "jira",
+      "confluence",
+      "trello",
+      "linux",
+      "unix",
+      "npm",
+      "yarn",
+      "pnpm",
+      "pip",
+      "poetry",
+      "pycharm",
+      "intellij",
+      "swagger",
+      "openapi"
+    ],
+    "devops_and_cloud": [
+      "docker",
+      "kubernetes",
+      "k8s",
+      "aws",
+      "amazon web services",
+      "azure",
+      "microsoft azure",
+      "gcp",
+      "google cloud",
+      "google cloud platform",
+      "ci/cd",
+      "continuous integration",
+      "continuous deployment",
+      "jenkins",
+      "github actions",
+      "gitlab ci",
+      "terraform",
+      "ansible",
+      "helm",
+      "nginx",
+      "apache",
+      "prometheus",
+      "grafana"
+    ],
+    "ai_ml_and_data_science": [
+      "pandas",
+      "numpy",
+      "scikit-learn",
+      "sklearn",
+      "nlp",
+      "natural language processing",
+      "tensorflow",
+      "pytorch",
+      "keras",
+      "opencv",
+      "hugging face",
+      "llm",
+      "large language models",
+      "generative ai",
+      "genai",
+      "data analysis",
+      "data analytics",
+      "data science",
+      "machine learning",
+      "deep learning",
+      "matplotlib",
+      "seaborn",
+      "tableau",
+      "power bi",
+      "etl",
+      "data pipeline",
+      "jupyter",
+      "ai"
+    ],
+    "technical_concepts_and_architecture": [
+      "rest api",
+      "restful api",
+      "rest",
+      "graphql",
+      "jwt",
+      "jwt authentication",
+      "json web token",
+      "microservices",
+      "monolithic architecture",
+      "oop",
+      "object-oriented programming",
+      "data structures",
+      "algorithms",
+      "system design",
+      "distributed systems",
+      "crud",
+      "websockets",
+      "asynchronous programming",
+      "multithreading",
+      "concurrency",
+      "unit testing",
+      "integration testing",
+      "tdd",
+      "test-driven development",
+      "agile",
+      "scrum",
+      "qa"
+    ],
+    "domain_and_business_technical_skills": [
+      "quality audits",
+      "stakeholder communication",
+      "reporting",
+      "dashboard tools",
+      "excel",
+      "microsoft excel",
+      "business intelligence",
+      "technical documentation",
+      "code review",
+      "performance optimization",
+      "database design",
+      "query optimization",
+      "api integration",
+      "productivity",
+      "benchmarks",
+      "productivity benchmarks",
+      "economics",
+      "economics reports",
+      "reports",
+      "analytical",
+      "capacity",
+      "critical",
+      "thinking",
+      "attention",
+      "detail",
+      "analysis",
+      "capability",
+      "precision",
+      "problem-solving",
+      "macros",
+      "mathematics"
+    ]
+  },
+  "technology_explanations": {
+    "docker": {
+      "category": "DevOps & Containerization",
+      "explanation": "Docker packages applications into standardized standalone containers containing code, runtime, and libraries, ensuring the application runs identically across development, staging, and production environments."
+    },
+    "kubernetes": {
+      "category": "DevOps & Orchestration",
+      "explanation": "Kubernetes (K8s) automates the deployment, horizontal scaling, load balancing, and self-healing management of containerized applications across server clusters."
+    },
+    "aws": {
+      "category": "Cloud Infrastructure",
+      "explanation": "Amazon Web Services (AWS) is a cloud computing platform providing on-demand compute (EC2), scalable storage (S3), relational database hosting (RDS), and serverless execution (Lambda)."
+    },
+    "azure": {
+      "category": "Cloud Infrastructure",
+      "explanation": "Microsoft Azure is an enterprise cloud computing suite supporting cloud-hosted virtual machines, app services, serverless functions, and relational/NoSQL databases."
+    },
+    "gcp": {
+      "category": "Cloud Infrastructure",
+      "explanation": "Google Cloud Platform provides high-performance cloud hosting, managed Kubernetes (GKE), BigQuery analytics, and AI/ML model deployment infrastructure."
+    },
+    "redis": {
+      "category": "Databases & In-Memory Caching",
+      "explanation": "Redis is an ultra-fast in-memory key-value data store commonly used for caching database queries, session management, message brokering, and rate-limiting."
+    },
+    "graphql": {
+      "category": "API Architecture",
+      "explanation": "GraphQL is an API query language that lets clients request precisely the data fields they need, preventing over-fetching and consolidating multi-endpoint REST calls into a single request."
+    },
+    "typescript": {
+      "category": "Programming Languages",
+      "explanation": "TypeScript is a statically typed superset of JavaScript developed by Microsoft that catches bugs during compilation and enables enterprise-scale refactoring and autocomplete."
+    },
+    "postgresql": {
+      "category": "Relational Databases",
+      "explanation": "PostgreSQL is an open-source, highly reliable object-relational database management system supporting ACID transactions, complex joins, and JSON/indexing capabilities."
+    },
+    "ci/cd": {
+      "category": "DevOps & Automation",
+      "explanation": "Continuous Integration & Continuous Deployment (CI/CD) automates running automated unit tests and deploying code changes to production servers upon git push."
+    },
+    "microservices": {
+      "category": "System Architecture",
+      "explanation": "An architectural pattern where a large application is structured as a collection of small, independently deployable services communicating over lightweight REST APIs or message queues."
+    },
+    "terraform": {
+      "category": "DevOps & Infrastructure as Code",
+      "explanation": "Terraform enables developers to provision and manage cloud infrastructure using declarative configuration files instead of manual console clicks."
+    },
+    "kafka": {
+      "category": "Distributed Event Streaming",
+      "explanation": "Apache Kafka is a distributed event store and stream-processing platform for high-throughput, fault-tolerant real-time data pipelines."
+    },
+    "celery": {
+      "category": "Asynchronous Task Queues",
+      "explanation": "Celery is an asynchronous distributed task queue for Python (often used with Django/Flask and Redis) to process background jobs like email dispatch and data scraping."
+    },
+    "tailwind css": {
+      "category": "Frontend Styling Framework",
+      "explanation": "A utility-first CSS framework providing composable utility classes to build bespoke, responsive user interfaces quickly without writing custom CSS selectors."
+    }
+  },
+  "candidate_profile_reference": {
+    "name": "jaya sri palli",
+    "education": "B.Tech (IT) 2022-2026, CGPA: 8.77",
+    "verified_technologies": [
+      "python",
+      "java",
+      "javascript",
+      "c",
+      "sql",
+      "html",
+      "css",
+      "react",
+      "node.js",
+      "django",
+      "flask",
+      "mongodb",
+      "git",
+      "github",
+      "vs code",
+      "render",
+      "pandas",
+      "scikit-learn",
+      "nlp",
+      "jwt",
+      "jwt authentication",
+      "rest api"
+    ],
+    "eligible_job_roles": [
+      "Python Full Stack Developer",
+      "Full Stack Developer",
+      "Python Developer",
+      "Backend Developer",
+      "Web Application Developer",
+      "Junior Data Analyst",
+      "React Frontend Developer"
+    ],
+    "incompatible_domains": [
+      "Embedded Firmware Engineer",
+      "iOS Swift Mobile Developer",
+      "Android Kotlin Developer",
+      "SAP Consultant",
+      "Hardware Design Engineer"
+    ]
+  }
+}
